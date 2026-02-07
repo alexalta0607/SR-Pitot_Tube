@@ -36,8 +36,13 @@
 						  //and synchronized status bits of sensor
 						  //status bits: bit 3 is dsp_s_up, bit 4 is dsp_t_up
 						  //pressure, temperature indicator
+#define COMMAND_REGISTER 0x22
 #define AIR_DENSITY 1.2250
-#define CAN_ID 0x260; //Check this
+#define CAN_ID 0x260 //Check this
+#define MIN_PRESSURE -0.29
+#define MAX_PRESSURE 0.29
+#define MIN_PRESSURE_COUNTS -26215
+#define MAX_PRESSURE_COUNTS 26214
 
 /* USER CODE END PD */
 
@@ -89,12 +94,12 @@ float read_sensor_data(void){
 	//int raw_temperature_reading = 0; //should this be int? //Don't think I actually need this
 	int16_t raw_pressure_reading = 0; //should this be int?
 	uint8_t dsp_s_up = 0;
-	uint8_t dsp_t_up = 0;
+	//uint8_t dsp_t_up = 0;
 
 	float pressure_reading;
 
 	//Device 7-bit address has to be shifted left 1 bit
-	if(HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS << 1, DATA_ADDRESS, 1, (uint8_t *) &buff, 6, HAL_MAX_DELAY) != HAL_OK){
+	if(HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS << 1, DATA_ADDRESS, 1, buff, 6, HAL_MAX_DELAY) != HAL_OK){
 		Error_Handler();
 	}
 
@@ -102,16 +107,15 @@ float read_sensor_data(void){
 	//After power-up, wait until status dsp_s_up and dsp_t_up bits have been set at least once
 
 	//The dsp status bits are bits 3 (pressure) and 4 (temperature) of buff[4]
-	dsp_s_up = (buff[4] >> 3) & 1;
-	dsp_t_up = (buff[4] >> 4) & 1;
+	dsp_s_up = buff[4] & (1 << 3);
+	//dsp_t_up = buff[4] & (1 << 4);
 
 	//Temp readings are in buff[0] and buff[1]
 	//buff[1] is the hi-byte
 	//pressure readings are in buff[2] and buff[3]
 	//buff[3] is the hi-byte
 
-	if(dsp_s_up && dsp_t_up){
-		//raw_temperature_reading = (buff[1] << 8) | buff[0]; //Don't think I need temperature
+	if(dsp_s_up){
 		raw_pressure_reading = (buff[3] << 8) | buff[2];
 		pressure_reading = process_pressure_data(raw_pressure_reading);
 	}
@@ -131,19 +135,13 @@ float read_sensor_data(void){
  */
 
 float process_pressure_data(int raw_pressure){
-	float minPressure = -0.29;
-	float maxPressure = 0.29;
-
-	int minPressureCounts = -26215;
-	int maxPressureCounts = 26214;
-
 	float pressure_reading;
 
 
 	//this is in psi,
 	//equation from datasheet
-	pressure_reading = minPressure + (((float)((raw_pressure - minPressureCounts) /
-									 (maxPressureCounts - minPressureCounts))) * (maxPressure - minPressure));
+	pressure_reading = MIN_PRESSURE + (((float)((raw_pressure - MIN_PRESSURE_COUNTS) /
+									 (MAX_PRESSURE_COUNTS - MIN_PRESSURE_COUNTS))) * (MAX_PRESSURE - MIN_PRESSURE));
 
 	//1 psi = 6894.75729 pascal
 	pressure_reading = pressure_reading * 6894.75729;
@@ -197,6 +195,12 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   CAN_header_init();
+
+  //Send a reset to the IC
+  uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset
+  if(HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 2, HAL_MAX_DELAY) != HAL_OK){
+	  Error_Handler();
+  }
 
   /* USER CODE END 2 */
 
