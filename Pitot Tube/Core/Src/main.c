@@ -197,7 +197,7 @@ int main(void)
   CAN_header_init();
 
   //Send a reset to the IC
-  uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset
+  uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset Lo-byte then Hi-byte from datasheet
   if(HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 2, HAL_MAX_DELAY) != HAL_OK){
 	  Error_Handler();
   }
