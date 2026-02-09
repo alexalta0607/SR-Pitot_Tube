@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -66,7 +67,6 @@ float wind_vel = 0;
 //CAN Variables
 CAN_TxHeaderTypeDef Tx_Header;
 uint32_t Tx_Mailbox;
-uint8_t data_buff[4] = {0};
 
 /* USER CODE END PV */
 
@@ -107,7 +107,7 @@ float read_sensor_data(void){
 	//After power-up, wait until status dsp_s_up and dsp_t_up bits have been set at least once
 
 	//The dsp status bits are bits 3 (pressure) and 4 (temperature) of buff[4]
-	dsp_s_up = buff[4] & (1 << 3);
+	dsp_s_up = buff[4] & (1 << 3); //This will return 8 if true, but it is used as bool anyways
 	//dsp_t_up = buff[4] & (1 << 4);
 
 	//Temp readings are in buff[0] and buff[1]
@@ -122,7 +122,7 @@ float read_sensor_data(void){
 
 	//what should happen if pressure data isn't valid?
 	else{
-		pressure_reading = 0;
+		pressure_reading = -1.0;
 	}
 
 	return pressure_reading;
@@ -196,11 +196,18 @@ int main(void)
   /* USER CODE BEGIN 2 */
   CAN_header_init();
 
-  //Send a reset to the IC
-  uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset Lo-byte then Hi-byte from datasheet
+  //Send a reset to the IC on startup
+  //uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset Lo-byte then Hi-byte from datasheet
+
+  //Is this the better way to do it?
+  uint8_t *reset = (uint8_t *)malloc(sizeof(uint8_t) * 2);
+  reset[0] = 0x69;
+  reset[1] = 0xB1;
+
   if(HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 2, HAL_MAX_DELAY) != HAL_OK){
 	  Error_Handler();
   }
+  free(reset);
 
   /* USER CODE END 2 */
 
@@ -215,6 +222,7 @@ int main(void)
 	  uint32_t wind_vel_mm = (uint32_t) (wind_vel * 1000); //stored in mm/s now with 32-bits
 
 	  //store 32-bit data into 4 bytes for sending over CAN
+	  uint8_t *data_buff = (uint8_t *) malloc(sizeof(uint8_t) * 4);
 	  data_buff[0] = (wind_vel_mm >> 24) & 255;
 	  data_buff[1] = (wind_vel_mm >> 16) & 255;
 	  data_buff[2] = (wind_vel_mm >> 8) & 255;
@@ -225,6 +233,8 @@ int main(void)
 	  if(HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox) != HAL_OK){
 		  Error_Handler();
 	  }
+
+	  free(data_buff); //is this fine?
 
     /* USER CODE END WHILE */
 
