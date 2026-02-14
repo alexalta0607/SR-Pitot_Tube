@@ -59,6 +59,8 @@ I2C_HandleTypeDef hi2c1;
 DMA_HandleTypeDef hdma_i2c1_tx;
 DMA_HandleTypeDef hdma_i2c1_rx;
 
+UART_HandleTypeDef huart1;
+
 /* USER CODE BEGIN PV */
 float pressure_diff;
 float wind_vel = 0;
@@ -76,6 +78,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_CAN1_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 float process_pressure_data(int raw_pressure);
 float read_sensor_data(void);
@@ -84,7 +87,6 @@ void CAN_header_init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 
 /* Read the data collected by SM7391 differential pressure
  * sensor and return it as a float in pascals
@@ -140,8 +142,13 @@ float process_pressure_data(int raw_pressure){
 
 	//this is in psi,
 	//equation from datasheet
-	pressure_reading = MIN_PRESSURE + (((float)((raw_pressure - MIN_PRESSURE_COUNTS) /
-									 (MAX_PRESSURE_COUNTS - MIN_PRESSURE_COUNTS))) * (MAX_PRESSURE - MIN_PRESSURE));
+	pressure_reading = raw_pressure - MIN_PRESSURE_COUNTS;
+
+	pressure_reading = pressure_reading * (MAX_PRESSURE - MIN_PRESSURE);
+
+	pressure_reading = pressure_reading / (MAX_PRESSURE_COUNTS - MIN_PRESSURE_COUNTS);
+
+	pressure_reading = MIN_PRESSURE + pressure_reading;
 
 	//1 psi = 6894.75729 pascal
 	pressure_reading = pressure_reading * 6894.75729;
@@ -193,22 +200,28 @@ int main(void)
   MX_DMA_Init();
   MX_CAN1_Init();
   MX_I2C1_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   CAN_header_init();
 
   //Send a reset to the IC on startup
-  //uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset Lo-byte then Hi-byte from datasheet
+  //uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset Lo-byte, then Hi-byte from datasheet
 
-  //Is this the better way to do it?
-  uint8_t *reset = (uint8_t *)malloc(sizeof(uint8_t) * 2);
-  reset[0] = 0x69;
-  reset[1] = 0xB1;
+  //Is this the better way to do it? over an array
+//  uint8_t *reset = (uint8_t *)malloc(sizeof(uint8_t) * 2);
+//  reset[0] = 0x69;
+//  reset[1] = 0xB1;
+//
+//  if(HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 1, HAL_MAX_DELAY) != HAL_OK){
+//	  Error_Handler();
+//  }
+//  free(reset);
 
-  if(HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 2, HAL_MAX_DELAY) != HAL_OK){
-	  Error_Handler();
-  }
-  free(reset);
+  uint8_t *data_buff = (uint8_t *) malloc(sizeof(uint8_t) * 4);
 
+
+
+  HAL_CAN_Start(&hcan1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -222,19 +235,20 @@ int main(void)
 	  uint32_t wind_vel_mm = (uint32_t) (wind_vel * 1000); //stored in mm/s now with 32-bits
 
 	  //store 32-bit data into 4 bytes for sending over CAN
-	  uint8_t *data_buff = (uint8_t *) malloc(sizeof(uint8_t) * 4);
-	  data_buff[0] = (wind_vel_mm >> 24) & 255;
-	  data_buff[1] = (wind_vel_mm >> 16) & 255;
-	  data_buff[2] = (wind_vel_mm >> 8) & 255;
-	  data_buff[3] = (wind_vel_mm) & 255;
 
-	  while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0); //Wait until there's an open TxMailbox
+	  data_buff[0] = (uint8_t) ((wind_vel_mm >> 24) & 255); //255 = 11111111 (8 bits all on)
+	  	  	  	  	  	  	  	  	  	  	  	//would: (wind_vel_mm) & (255 << 3) be equivalent?
+	  data_buff[1] = (uint8_t) ((wind_vel_mm >> 16) & 255);
+	  data_buff[2] = (uint8_t) ((wind_vel_mm >> 8) & 255);
+	  data_buff[3] = (uint8_t) ((wind_vel_mm) & 255);
+
+	  //data is stored into the buffer highest byte to lowest byte
+
+	  //while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0); //Wait until there's an open TxMailbox
 
 	  if(HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox) != HAL_OK){
 		  Error_Handler();
 	  }
-
-	  free(data_buff); //is this fine?
 
     /* USER CODE END WHILE */
 
@@ -362,6 +376,39 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -387,7 +434,6 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
@@ -396,18 +442,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin : PA9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
