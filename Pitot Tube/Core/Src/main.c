@@ -27,6 +27,14 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct Sensor_Readings_t{
+	uint8_t buff[6];
+	uint16_t raw_pressure_reading;
+	uint8_t dsp_s_up;
+	float pressure_reading;
+} Sensor_readings;
+
+
 
 /* USER CODE END PTD */
 
@@ -64,6 +72,8 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 float pressure_diff;
 float wind_vel = 0;
+uint32_t wind_vel_mm = 0;
+Sensor_readings sensor;
 
 
 //CAN Variables
@@ -80,8 +90,8 @@ static void MX_CAN1_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-float process_pressure_data(int raw_pressure);
-float read_sensor_data(void);
+void process_pressure_data(Sensor_readings *sensor);
+void read_sensor_data(Sensor_readings *sensor);
 void CAN_header_init(void);
 /* USER CODE END PFP */
 
@@ -91,25 +101,18 @@ void CAN_header_init(void);
 /* Read the data collected by SM7391 differential pressure
  * sensor and return it as a float in pascals
  */
-float read_sensor_data(void){
-	uint8_t buff[6] = {0}; //three 16-bit "words"
-	//int raw_temperature_reading = 0; //should this be int? //Don't think I actually need this
-	int16_t raw_pressure_reading = 0; //should this be int?
-	uint8_t dsp_s_up = 0;
-	//uint8_t dsp_t_up = 0;
-
-	float pressure_reading;
+void read_sensor_data(Sensor_readings *sensor){
 
 	//Device 7-bit address has to be shifted left 1 bit
-	if(HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS << 1, DATA_ADDRESS, 1, buff, 6, HAL_MAX_DELAY) != HAL_OK){
-		Error_Handler();
-	}
-
+//	if(HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS << 1, DATA_ADDRESS, 1, buff, 6, HAL_MAX_DELAY) != HAL_OK){
+//		Error_Handler();
+//	}
+	HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS<<1, DATA_ADDRESS, 1, sensor->buff, 6, HAL_MAX_DELAY);
 	//Temperature and Pressure Registers have invalid data after power-up
 	//After power-up, wait until status dsp_s_up and dsp_t_up bits have been set at least once
 
 	//The dsp status bits are bits 3 (pressure) and 4 (temperature) of buff[4]
-	dsp_s_up = buff[4] & (1 << 3); //This will return 8 if true, but it is used as bool anyways
+	sensor->dsp_s_up = sensor->buff[4] & (1 << 3); //This will return 8 if true, but it is used as bool anyways
 	//dsp_t_up = buff[4] & (1 << 4);
 
 	//Temp readings are in buff[0] and buff[1]
@@ -117,17 +120,15 @@ float read_sensor_data(void){
 	//pressure readings are in buff[2] and buff[3]
 	//buff[3] is the hi-byte
 
-	if(dsp_s_up){
-		raw_pressure_reading = (buff[3] << 8) | buff[2];
-		pressure_reading = process_pressure_data(raw_pressure_reading);
+	if(sensor->dsp_s_up){
+		sensor->raw_pressure_reading = (sensor->buff[3] << 8) | sensor->buff[2];
+		process_pressure_data(sensor);
 	}
 
 	//what should happen if pressure data isn't valid?
 	else{
-		pressure_reading = -1.0;
+		sensor->pressure_reading = -1.0;
 	}
-
-	return pressure_reading;
 
 }
 
@@ -136,27 +137,19 @@ float read_sensor_data(void){
  * and return it in pascals
  */
 
-float process_pressure_data(int raw_pressure){
-	float pressure_reading;
-
-
+void process_pressure_data(Sensor_readings *sensor){
 	//this is in psi,
 	//equation from datasheet
-	pressure_reading = raw_pressure - MIN_PRESSURE_COUNTS;
+	sensor->pressure_reading = sensor->raw_pressure_reading - MIN_PRESSURE_COUNTS;
 
-	pressure_reading = pressure_reading * (MAX_PRESSURE - MIN_PRESSURE);
+	sensor->pressure_reading = sensor->pressure_reading * (MAX_PRESSURE - MIN_PRESSURE);
 
-	pressure_reading = pressure_reading / (MAX_PRESSURE_COUNTS - MIN_PRESSURE_COUNTS);
+	sensor->pressure_reading = sensor->pressure_reading / (MAX_PRESSURE_COUNTS - MIN_PRESSURE_COUNTS);
 
-	pressure_reading = MIN_PRESSURE + pressure_reading;
+	sensor->pressure_reading = MIN_PRESSURE + sensor->pressure_reading;
 
 	//1 psi = 6894.75729 pascal
-	pressure_reading = pressure_reading * 6894.75729;
-
-
-
-
-	return pressure_reading; //in pascal
+	sensor->pressure_reading = sensor->pressure_reading * 6894.75729; //in pascal
 }
 
 void CAN_header_init(void){
@@ -219,7 +212,8 @@ int main(void)
 
   uint8_t *data_buff = (uint8_t *) malloc(sizeof(uint8_t) * 4);
 
-
+  uint8_t reset[] = {0x69, 0xB1};
+  HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 1, HAL_MAX_DELAY);
 
   HAL_CAN_Start(&hcan1);
   /* USER CODE END 2 */
@@ -229,10 +223,10 @@ int main(void)
   while (1)
   {
 
-	  pressure_diff = read_sensor_data(); //in pascals
-	  wind_vel = sqrt( (2.0 / ((float) AIR_DENSITY)) * (pressure_diff) ); //in m/s
+	  read_sensor_data(&sensor); //in pascals
+	  wind_vel = sqrt( (2.0 / ((float) AIR_DENSITY)) * (sensor.pressure_reading) ); //in m/s
 
-	  uint32_t wind_vel_mm = (uint32_t) (wind_vel * 1000); //stored in mm/s now with 32-bits
+	  wind_vel_mm = (uint32_t) (wind_vel * 1000); //stored in mm/s now with 32-bits
 
 	  //store 32-bit data into 4 bytes for sending over CAN
 
@@ -244,11 +238,11 @@ int main(void)
 
 	  //data is stored into the buffer highest byte to lowest byte
 
-	  //while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0); //Wait until there's an open TxMailbox
-
-	  if(HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox) != HAL_OK){
-		  Error_Handler();
-	  }
+	  while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0); //Wait until there's an open TxMailbox
+	  HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox);
+//	  if(HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox) != HAL_OK){
+//
+//	  }
 
     /* USER CODE END WHILE */
 
@@ -320,10 +314,10 @@ static void MX_CAN1_Init(void)
 
   /* USER CODE END CAN1_Init 1 */
   hcan1.Instance = CAN1;
-  hcan1.Init.Prescaler = 16;
+  hcan1.Init.Prescaler = 18;
   hcan1.Init.Mode = CAN_MODE_NORMAL;
   hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan1.Init.TimeSeg1 = CAN_BS1_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_2TQ;
   hcan1.Init.TimeSeg2 = CAN_BS2_1TQ;
   hcan1.Init.TimeTriggeredMode = DISABLE;
   hcan1.Init.AutoBusOff = DISABLE;
