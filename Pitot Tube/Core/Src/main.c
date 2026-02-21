@@ -74,6 +74,7 @@ float pressure_diff;
 float wind_vel = 0;
 uint32_t wind_vel_mm = 0;
 Sensor_readings sensor;
+uint8_t reset[] = {0x69, 0xB1};
 
 
 //CAN Variables
@@ -93,6 +94,7 @@ static void MX_USART1_UART_Init(void);
 void process_pressure_data(Sensor_readings *sensor);
 void read_sensor_data(Sensor_readings *sensor);
 void CAN_header_init(void);
+void reset_sensor(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -128,6 +130,7 @@ void read_sensor_data(Sensor_readings *sensor){
 	//what should happen if pressure data isn't valid?
 	else{
 		sensor->pressure_reading = -1.0;
+		reset_sensor();
 	}
 
 }
@@ -157,6 +160,25 @@ void CAN_header_init(void){
 	Tx_Header.DLC = 4; //Four bytes for the wind velocity reading (32-bit)
 	Tx_Header.IDE = CAN_ID_STD;
 	Tx_Header.RTR = CAN_RTR_DATA;
+}
+
+void reset_sensor(void){
+	uint8_t buff[] = {0};
+	HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 1, HAL_MAX_DELAY);
+	HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS <<1, 0x30, 1, buff, 2, HAL_MAX_DELAY); //read just pressure data to hopefully reset status bit.
+}
+
+void send_CAN(uint8_t data_buff[]){
+	if(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0){
+		  uint32_t start = HAL_GetTick();
+
+		  while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0){
+			  if((HAL_GetTick() - start) > 10){ //give it 10 ticks, after that leave function
+				  return;
+			  }
+		  }
+	  }
+	HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox);
 }
 
 /* USER CODE END 0 */
@@ -197,23 +219,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
   CAN_header_init();
 
-  //Send a reset to the IC on startup
-  //uint8_t reset[2] = {0x69, 0xB1}; //0xB169: Reset Lo-byte, then Hi-byte from datasheet
-
-  //Is this the better way to do it? over an array
-//  uint8_t *reset = (uint8_t *)malloc(sizeof(uint8_t) * 2);
-//  reset[0] = 0x69;
-//  reset[1] = 0xB1;
-//
-//  if(HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 1, HAL_MAX_DELAY) != HAL_OK){
-//	  Error_Handler();
-//  }
-//  free(reset);
-
-  uint8_t *data_buff = (uint8_t *) malloc(sizeof(uint8_t) * 4);
-
-  uint8_t reset[] = {0x69, 0xB1};
-  HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 1, HAL_MAX_DELAY);
+  uint8_t data_buff[] = {0};
+  reset_sensor();
 
   HAL_CAN_Start(&hcan1);
   /* USER CODE END 2 */
@@ -231,18 +238,13 @@ int main(void)
 	  //store 32-bit data into 4 bytes for sending over CAN
 
 	  data_buff[0] = (uint8_t) ((wind_vel_mm >> 24) & 255); //255 = 11111111 (8 bits all on)
-	  	  	  	  	  	  	  	  	  	  	  	//would: (wind_vel_mm) & (255 << 3) be equivalent?
 	  data_buff[1] = (uint8_t) ((wind_vel_mm >> 16) & 255);
 	  data_buff[2] = (uint8_t) ((wind_vel_mm >> 8) & 255);
 	  data_buff[3] = (uint8_t) ((wind_vel_mm) & 255);
 
 	  //data is stored into the buffer highest byte to lowest byte
+	  send_CAN(data_buff);
 
-	  while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0); //Wait until there's an open TxMailbox
-	  HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox);
-//	  if(HAL_CAN_AddTxMessage(&hcan1, &Tx_Header, data_buff, &Tx_Mailbox) != HAL_OK){
-//
-//	  }
 
     /* USER CODE END WHILE */
 
