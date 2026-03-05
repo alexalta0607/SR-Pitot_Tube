@@ -47,7 +47,7 @@ typedef struct Sensor_Readings_t{
 						  //pressure, temperature indicator
 #define COMMAND_REGISTER 0x22
 #define AIR_DENSITY 1.2250
-#define CAN_ID 0x260 //Check this
+#define CAN_ID 0x260
 #define MIN_PRESSURE -0.29
 #define MAX_PRESSURE 0.29
 #define MIN_PRESSURE_COUNTS -26215
@@ -75,6 +75,7 @@ float wind_vel = 0;
 uint32_t wind_vel_mm = 0;
 Sensor_readings sensor;
 uint8_t reset[] = {0x69, 0xB1};
+uint8_t reset_counter;
 
 
 //CAN Variables
@@ -105,13 +106,9 @@ void reset_sensor(void);
  */
 void read_sensor_data(Sensor_readings *sensor){
 
-	//Device 7-bit address has to be shifted left 1 bit
-//	if(HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS << 1, DATA_ADDRESS, 1, buff, 6, HAL_MAX_DELAY) != HAL_OK){
-//		Error_Handler();
-//	}
 	HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS<<1, DATA_ADDRESS, 1, sensor->buff, 6, HAL_MAX_DELAY);
 	//Temperature and Pressure Registers have invalid data after power-up
-	//After power-up, wait until status dsp_s_up and dsp_t_up bits have been set at least once
+	//After power-up, wait until status dsp_s_up has been set at least once
 
 	//The dsp status bits are bits 3 (pressure) and 4 (temperature) of buff[4]
 	sensor->dsp_s_up = sensor->buff[4] & (1 << 3); //This will return 8 if true, but it is used as bool anyways
@@ -123,6 +120,7 @@ void read_sensor_data(Sensor_readings *sensor){
 	//buff[3] is the hi-byte
 
 	if(sensor->dsp_s_up){
+		reset_counter = 0;
 		sensor->raw_pressure_reading = (sensor->buff[3] << 8) | sensor->buff[2];
 		process_pressure_data(sensor);
 	}
@@ -130,7 +128,10 @@ void read_sensor_data(Sensor_readings *sensor){
 	//what should happen if pressure data isn't valid?
 	else{
 		sensor->pressure_reading = -1.0;
-		reset_sensor();
+		if(reset_counter < 5){
+		 reset_counter = reset_counter + 1;
+		}
+		//reset_sensor();
 	}
 
 }
@@ -163,9 +164,11 @@ void CAN_header_init(void){
 }
 
 void reset_sensor(void){
-	uint8_t buff[] = {0};
+	uint8_t buff[2] = {0};
 	HAL_I2C_Mem_Write(&hi2c1, DEVICE_ADDRESS << 1, COMMAND_REGISTER, 1, reset, 1, HAL_MAX_DELAY);
+	HAL_Delay(2);
 	HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS <<1, 0x30, 1, buff, 2, HAL_MAX_DELAY); //read just pressure data to hopefully reset status bit.
+	reset_counter++;
 }
 
 void send_CAN(uint8_t data_buff[]){
@@ -220,7 +223,7 @@ int main(void)
   CAN_header_init();
 
   uint8_t data_buff[] = {0};
-  reset_sensor();
+  //reset_sensor();
 
   HAL_CAN_Start(&hcan1);
   /* USER CODE END 2 */
@@ -244,7 +247,6 @@ int main(void)
 
 	  //data is stored into the buffer highest byte to lowest byte
 	  send_CAN(data_buff);
-
 
     /* USER CODE END WHILE */
 
