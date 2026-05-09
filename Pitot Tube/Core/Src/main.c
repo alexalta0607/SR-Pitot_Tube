@@ -52,12 +52,12 @@ typedef struct Sensor_Readings_t{
 #define MAX_PRESSURE 0.29
 #define MIN_PRESSURE_COUNTS -26215
 #define MAX_PRESSURE_COUNTS 26214
+#define AIRSPEED_ZERO 1.636 // m/s  was 1.367
 
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -104,6 +104,7 @@ void reset_sensor(void);
 /* Read the data collected by SM7391 differential pressure
  * sensor and return it as a float in pascals
  */
+
 void read_sensor_data(Sensor_readings *sensor){
 
 	HAL_I2C_Mem_Read(&hi2c1, DEVICE_ADDRESS<<1, DATA_ADDRESS, 1, sensor->buff, 6, HAL_MAX_DELAY);
@@ -131,7 +132,6 @@ void read_sensor_data(Sensor_readings *sensor){
 		if(reset_counter < 5){
 		 reset_counter = reset_counter + 1;
 		}
-		//reset_sensor();
 	}
 
 }
@@ -230,23 +230,33 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
   while (1)
   {
 
 	  read_sensor_data(&sensor); //in pascals
 	  wind_vel = sqrt( (2.0 / ((float) AIR_DENSITY)) * (sensor.pressure_reading) ); //in m/s
+	  wind_vel = wind_vel - AIRSPEED_ZERO;
+
+	  //prevent negative wind_vel
+	  //anything under the zero value is going to output 0.
+	  if (wind_vel < 0){
+		  wind_vel = 0;
+	  }
 
 	  wind_vel_mm = (uint32_t) (wind_vel * 1000); //stored in mm/s now with 32-bits
 
 	  //store 32-bit data into 4 bytes for sending over CAN
 
-	  data_buff[0] = (uint8_t) ((wind_vel_mm >> 24) & 255); //255 = 11111111 (8 bits all on)
-	  data_buff[1] = (uint8_t) ((wind_vel_mm >> 16) & 255);
-	  data_buff[2] = (uint8_t) ((wind_vel_mm >> 8) & 255);
-	  data_buff[3] = (uint8_t) ((wind_vel_mm) & 255);
+	  data_buff[0] = (uint8_t) ((wind_vel_mm >> 24)); //255 = 11111111 (8 bits all on)
+	  data_buff[1] = (uint8_t) ((wind_vel_mm >> 16));
+	  data_buff[2] = (uint8_t) ((wind_vel_mm >> 8));
+	  data_buff[3] = (uint8_t) ((wind_vel_mm));
 
 	  //data is stored into the buffer highest byte to lowest byte
 	  send_CAN(data_buff);
+
+	  HAL_Delay(100); //100ms --> 10HZ, should change it to 10ms for 100HZ
 
     /* USER CODE END WHILE */
 
