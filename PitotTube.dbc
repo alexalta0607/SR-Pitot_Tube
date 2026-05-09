@@ -1,0 +1,8 @@
+VERSION ""
+
+BS_:
+
+BU_:
+
+BO_ 608 Pitot_Tube_Message_1: 4 PITOT_TUBE
+SG_ Pitot_Tube_WindVel : 7|32@0+ (0.001,0) [0|129.9428] "m/s" Vector__XXX
